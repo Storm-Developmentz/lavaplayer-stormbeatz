@@ -214,7 +214,7 @@ public class DefaultYoutubeTrackDetailsLoader implements YoutubeTrackDetailsLoad
   protected JsonBrowser loadTrackArgsFromVideoInfoPage(HttpInterface httpInterface, String videoId, String sts) throws IOException {
     String videoApiUrl = "https://youtube.googleapis.com/v/" + videoId;
     String encodedApiUrl = URLEncoder.encode(videoApiUrl, UTF_8.name());
-    String url = "https://www.youtube.com/get_video_info?&video_id=" + videoId + "&eurl=" + videoApiUrl + "&sts" + sts + "&html5=1&c=TVHTML5&cver=7.20201028";
+    String url = "https://www.youtube.com/get_video_info?video_id=" + videoId + "&eurl=" + videoApiUrl + "&sts" + sts + "&html5=1&c=TVHTML5&cver=7.20201028";
 
     JsonBrowser values = JsonBrowser.newMap();
 
