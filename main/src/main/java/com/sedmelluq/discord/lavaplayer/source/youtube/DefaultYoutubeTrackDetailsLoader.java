@@ -215,7 +215,7 @@ public class DefaultYoutubeTrackDetailsLoader implements YoutubeTrackDetailsLoad
     String videoApiUrl = "https://youtube.googleapis.com/v/" + videoId;
     String encodedApiUrl = URLEncoder.encode(videoApiUrl, UTF_8.name());
     String url = "https://www.youtube.com/get_video_info?html5=1&video_id=" + videoId + "&c=TVHTML5&cver=7.20201028";
-
+ 
     if (sts != null) {
       url += "&sts=" + sts;
     }
