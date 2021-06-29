@@ -22,6 +22,7 @@ import org.apache.http.entity.StringEntity;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
+import static com.sedmelluq.discord.lavaplayer.source.youtube.YoutubeHttpContextFilter.PBJ_PARAMETER;
 import static com.sedmelluq.discord.lavaplayer.tools.FriendlyException.Severity.COMMON;
 
 public class DefaultYoutubePlaylistLoader implements YoutubePlaylistLoader {
@@ -40,7 +41,7 @@ public class DefaultYoutubePlaylistLoader implements YoutubePlaylistLoader {
   public AudioPlaylist load(HttpInterface httpInterface, String playlistId, String selectedVideoId,
                             Function<AudioTrackInfo, AudioTrack> trackFactory) {
 
-    HttpGet request = new HttpGet(getPlaylistUrl(playlistId) + "&pbj=1&hl=en");
+    HttpGet request = new HttpGet(getPlaylistUrl(playlistId) + PBJ_PARAMETER + "&hl=en");
 
     try (CloseableHttpResponse response = httpInterface.execute(request)) {
       HttpClientTools.assertSuccessWithContent(response, "playlist response");

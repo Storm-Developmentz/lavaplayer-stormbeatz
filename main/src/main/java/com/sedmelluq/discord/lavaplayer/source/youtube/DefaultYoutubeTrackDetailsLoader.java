@@ -20,6 +20,7 @@ import org.slf4j.LoggerFactory;
 import java.io.IOException;
 import java.net.URLEncoder;
 
+import static com.sedmelluq.discord.lavaplayer.source.youtube.YoutubeHttpContextFilter.PBJ_PARAMETER;
 import static com.sedmelluq.discord.lavaplayer.source.youtube.YoutubeTrackJsonData.fromEmbedParts;
 import static com.sedmelluq.discord.lavaplayer.tools.ExceptionTools.throwWithDebugInfo;
 import static com.sedmelluq.discord.lavaplayer.tools.FriendlyException.Severity.COMMON;
@@ -181,7 +182,7 @@ public class DefaultYoutubeTrackDetailsLoader implements YoutubeTrackDetailsLoad
   }
 
   protected JsonBrowser loadTrackInfoFromMainPage(HttpInterface httpInterface, String videoId) throws IOException {
-    String url = "https://www.youtube.com/watch?v=" + videoId + "&pbj=1&hl=en";
+    String url = "https://www.youtube.com/watch?v=" + videoId + PBJ_PARAMETER + "&hl=en";
 
     try (CloseableHttpResponse response = httpInterface.execute(new HttpGet(url))) {
       HttpClientTools.assertSuccessWithContent(response, "video page response");
