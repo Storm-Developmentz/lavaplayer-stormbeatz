@@ -6,22 +6,16 @@ import com.sedmelluq.discord.lavaplayer.tools.FriendlyException;
 import com.sedmelluq.discord.lavaplayer.tools.JsonBrowser;
 import com.sedmelluq.discord.lavaplayer.tools.io.HttpClientTools;
 import com.sedmelluq.discord.lavaplayer.tools.io.HttpInterface;
-import com.sedmelluq.discord.lavaplayer.tools.io.HttpInterfaceManager;
-import org.apache.http.NameValuePair;
+import java.io.IOException;
 import org.apache.http.client.methods.CloseableHttpResponse;
 import org.apache.http.client.methods.HttpGet;
 import org.apache.http.client.methods.HttpPost;
-import org.apache.http.client.utils.URLEncodedUtils;
 import org.apache.http.entity.StringEntity;
 import org.apache.http.util.EntityUtils;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
-import java.io.IOException;
-import java.net.URLEncoder;
-
 import static com.sedmelluq.discord.lavaplayer.source.youtube.YoutubeHttpContextFilter.PBJ_PARAMETER;
-import static com.sedmelluq.discord.lavaplayer.source.youtube.YoutubeTrackJsonData.fromEmbedParts;
 import static com.sedmelluq.discord.lavaplayer.tools.ExceptionTools.throwWithDebugInfo;
 import static com.sedmelluq.discord.lavaplayer.tools.FriendlyException.Severity.COMMON;
 import static com.sedmelluq.discord.lavaplayer.tools.FriendlyException.Severity.SUSPICIOUS;
@@ -32,13 +26,6 @@ public class DefaultYoutubeTrackDetailsLoader implements YoutubeTrackDetailsLoad
 
   private static final String AGE_VERIFY_REQUEST_URL = "https://www.youtube.com/youtubei/v1/verify_age?key=AIzaSyAO_FJ2SlqU8Q4STEHLGCilw_Y9_11qcW8";
   private static final String AGE_VERIFY_REQUEST_PAYLOAD = "{\"context\":{\"client\":{\"clientName\":\"WEB\",\"clientVersion\":\"2.20210302.07.01\"}},\"nextEndpoint\":{\"urlEndpoint\":{\"url\":\"%s\"}},\"setControvercy\":true}";
-  private final HttpInterfaceManager httpInterfaceManager;
-
-  public DefaultYoutubeTrackDetailsLoader() {
-    this.httpInterfaceManager = HttpClientTools.createCookielessThreadLocalManager();
-    httpInterfaceManager.setHttpContextFilter(new BaseYoutubeHttpContextFilter());
-  }
-
   private static final String PLAYER_REQUEST_URL = "https://www.youtube.com/youtubei/v1/player?key=AIzaSyAO_FJ2SlqU8Q4STEHLGCilw_Y9_11qcW8";
   private static final String PLAYER_REQUEST_PAYLOAD = "{\"context\":{\"client\":{\"clientName\":\"ANDROID\",\"clientVersion\":\"16.24\",\"clientScreen\":\"EMBED\"}},\"racyCheckOk\":true,\"contentCheckOk\":true,\"videoId\":\"%s\"}";
 
@@ -176,7 +163,7 @@ public class DefaultYoutubeTrackDetailsLoader implements YoutubeTrackDetailsLoad
   protected JsonBrowser loadTrackInfoFromMainPage(HttpInterface httpInterface, String videoId) throws IOException {
     String url = "https://www.youtube.com/watch?v=" + videoId + PBJ_PARAMETER + "&hl=en";
 
-    try (CloseableHttpResponse response = httpInterface.execute(post)) {
+    try (CloseableHttpResponse response = httpInterface.execute(new HttpGet(url))) {
       HttpClientTools.assertSuccessWithContent(response, "video page response");
 
       String responseText = EntityUtils.toString(response.getEntity(), UTF_8);
@@ -197,7 +184,7 @@ public class DefaultYoutubeTrackDetailsLoader implements YoutubeTrackDetailsLoad
     StringEntity payload = new StringEntity(String.format(PLAYER_REQUEST_PAYLOAD, videoId), "UTF-8");
     post.setEntity(payload);
 
-    try (CloseableHttpResponse response = httpInterfaceManager.getInterface().execute(new HttpGet(url))) {
+    try (CloseableHttpResponse response = httpInterface.execute(post)) {
       HttpClientTools.assertSuccessWithContent(response, "video info response");
 
       String json = EntityUtils.toString(response.getEntity(), UTF_8);
@@ -276,25 +263,13 @@ public class DefaultYoutubeTrackDetailsLoader implements YoutubeTrackDetailsLoad
     }
   }
 
-  public CachedPlayerScript getCachedPlayerScript() {
-    return cachedPlayerScript;
-  }
-
-  public void clearCache() {
-    cachedPlayerScript = null;
-  }
-
-  public static class CachedPlayerScript {
-    private final String playerScriptUrl;
-    private final long timestamp;
+  protected static class CachedPlayerScript {
+    public final String playerScriptUrl;
+    public final long timestamp;
 
     public CachedPlayerScript(String playerScriptUrl, long timestamp) {
       this.playerScriptUrl = playerScriptUrl;
       this.timestamp = timestamp;
-    }
-
-    public String getPlayerScriptUrl() {
-      return playerScriptUrl;
     }
   }
 }
