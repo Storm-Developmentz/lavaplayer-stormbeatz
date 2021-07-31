@@ -6,16 +6,22 @@ import com.sedmelluq.discord.lavaplayer.tools.FriendlyException;
 import com.sedmelluq.discord.lavaplayer.tools.JsonBrowser;
 import com.sedmelluq.discord.lavaplayer.tools.io.HttpClientTools;
 import com.sedmelluq.discord.lavaplayer.tools.io.HttpInterface;
-import java.io.IOException;
+import com.sedmelluq.discord.lavaplayer.tools.io.HttpInterfaceManager;
+import org.apache.http.NameValuePair;
 import org.apache.http.client.methods.CloseableHttpResponse;
 import org.apache.http.client.methods.HttpGet;
 import org.apache.http.client.methods.HttpPost;
+import org.apache.http.client.utils.URLEncodedUtils;
 import org.apache.http.entity.StringEntity;
 import org.apache.http.util.EntityUtils;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
+import java.io.IOException;
+import java.net.URLEncoder;
+
 import static com.sedmelluq.discord.lavaplayer.source.youtube.YoutubeHttpContextFilter.PBJ_PARAMETER;
+import static com.sedmelluq.discord.lavaplayer.source.youtube.YoutubeTrackJsonData.fromEmbedParts;
 import static com.sedmelluq.discord.lavaplayer.tools.ExceptionTools.throwWithDebugInfo;
 import static com.sedmelluq.discord.lavaplayer.tools.FriendlyException.Severity.COMMON;
 import static com.sedmelluq.discord.lavaplayer.tools.FriendlyException.Severity.SUSPICIOUS;
@@ -26,8 +32,19 @@ public class DefaultYoutubeTrackDetailsLoader implements YoutubeTrackDetailsLoad
 
   private static final String AGE_VERIFY_REQUEST_URL = "https://www.youtube.com/youtubei/v1/verify_age?key=AIzaSyAO_FJ2SlqU8Q4STEHLGCilw_Y9_11qcW8";
   private static final String AGE_VERIFY_REQUEST_PAYLOAD = "{\"context\":{\"client\":{\"clientName\":\"WEB\",\"clientVersion\":\"2.20210302.07.01\"}},\"nextEndpoint\":{\"urlEndpoint\":{\"url\":\"%s\"}},\"setControvercy\":true}";
-  private static final String PLAYER_REQUEST_URL = "https://www.youtube.com/youtubei/v1/player?key=AIzaSyAO_FJ2SlqU8Q4STEHLGCilw_Y9_11qcW8";
-  private static final String PLAYER_REQUEST_PAYLOAD = "{\"context\":{\"client\":{\"clientName\":\"ANDROID\",\"clientVersion\":\"16.24\",\"clientScreen\":\"EMBED\"}},\"racyCheckOk\":true,\"contentCheckOk\":true,\"videoId\":\"%s\"}";
+  private final HttpInterfaceManager httpInterfaceManager;
+
+  public DefaultYoutubeTrackDetailsLoader() {
+    this.httpInterfaceManager = HttpClientTools.createCookielessThreadLocalManager();
+    httpInterfaceManager.setHttpContextFilter(new BaseYoutubeHttpContextFilter());
+  }
+
+  private static final String[] EMBED_CONFIG_PREFIXES = new String[]{
+      "'WEB_PLAYER_CONTEXT_CONFIGS':",
+      "WEB_PLAYER_CONTEXT_CONFIGS\":",
+      "'PLAYER_CONFIG':",
+      "\"PLAYER_CONFIG\":"
+  };
 
   private volatile CachedPlayerScript cachedPlayerScript = null;
 
@@ -82,8 +99,12 @@ public class DefaultYoutubeTrackDetailsLoader implements YoutubeTrackDetailsLoad
     }
 
     if (requireFormats && status == InfoStatus.REQUIRES_LOGIN) {
-      JsonBrowser trackInfo = loadTrackInfoFromInnertube(httpInterface, videoId);
-      return YoutubeTrackJsonData.fromMainResult(trackInfo);
+      JsonBrowser basicInfo = loadTrackBaseInfoFromEmbedPage(httpInterface, videoId);
+
+      return fromEmbedParts(
+          basicInfo,
+          loadTrackArgsFromVideoInfoPage(videoId, basicInfo.get("sts").text())
+      );
     } else {
       return data;
     }
@@ -179,24 +200,46 @@ public class DefaultYoutubeTrackDetailsLoader implements YoutubeTrackDetailsLoad
     }
   }
 
-  protected JsonBrowser loadTrackInfoFromInnertube(HttpInterface httpInterface, String videoId) throws IOException {
-    HttpPost post = new HttpPost(PLAYER_REQUEST_URL);
-    StringEntity payload = new StringEntity(String.format(PLAYER_REQUEST_PAYLOAD, videoId), "UTF-8");
-    post.setEntity(payload);
+  protected JsonBrowser loadTrackBaseInfoFromEmbedPage(HttpInterface httpInterface, String videoId) throws IOException {
+    try (CloseableHttpResponse response = httpInterface.execute(new HttpGet("https://www.youtube.com/embed/" + videoId))) {
+      HttpClientTools.assertSuccessWithContent(response, "embed video page response");
 
-    try (CloseableHttpResponse response = httpInterface.execute(post)) {
-      HttpClientTools.assertSuccessWithContent(response, "video info response");
+      String html = EntityUtils.toString(response.getEntity(), UTF_8);
+      String configJson = DataFormatTools.extractAfter(html, EMBED_CONFIG_PREFIXES);
 
-      String json = EntityUtils.toString(response.getEntity(), UTF_8);
-      if (json != null) {
-        return JsonBrowser.parse(json);
+      if (configJson != null) {
+        // configJson is not pure JSON - it contains data after the object ends, but this does not break parsing.
+        return JsonBrowser.parse(configJson);
       }
 
-      log.error("Did not receive response from Innertube request on track {} response: {}", videoId, response);
+      log.debug("Did not find player config in track {} embed page HTML: {}", videoId, html);
     }
 
-    throw new FriendlyException("Track requires age verification.", SUSPICIOUS,
-            new IllegalStateException("Expected response is not present."));
+    throw new FriendlyException("Track information is unavailable.", SUSPICIOUS,
+        new IllegalStateException("Expected player config is not present in embed page."));
+  }
+
+  protected JsonBrowser loadTrackArgsFromVideoInfoPage(String videoId, String sts) throws IOException {
+    String videoApiUrl = "https://youtube.googleapis.com/v/" + videoId;
+    String encodedApiUrl = URLEncoder.encode(videoApiUrl, UTF_8.name());
+    String url = "https://www.youtube.com/get_video_info?video_id=" + videoId + "&eurl=" + encodedApiUrl +
+    "&hl=en_GB&html5=1&c=ANDROID&cver=16.24";
+
+    if (sts != null) {
+      url += "&sts=" + sts;
+    }
+
+    JsonBrowser values = JsonBrowser.newMap();
+
+    try (CloseableHttpResponse response = httpInterfaceManager.getInterface().execute(new HttpGet(url))) {
+      HttpClientTools.assertSuccessWithContent(response, "video info response");
+
+      for (NameValuePair pair : URLEncodedUtils.parse(response.getEntity())) {
+        values.put(pair.getName(), pair.getValue());
+      }
+    }
+
+    return values;
   }
 
   protected JsonBrowser loadTrackInfoWithContentVerifyRequest(HttpInterface httpInterface, String videoId) throws IOException {
@@ -263,13 +306,25 @@ public class DefaultYoutubeTrackDetailsLoader implements YoutubeTrackDetailsLoad
     }
   }
 
-  protected static class CachedPlayerScript {
-    public final String playerScriptUrl;
-    public final long timestamp;
+  public CachedPlayerScript getCachedPlayerScript() {
+    return cachedPlayerScript;
+  }
+
+  public void clearCache() {
+    cachedPlayerScript = null;
+  }
+
+  public static class CachedPlayerScript {
+    private final String playerScriptUrl;
+    private final long timestamp;
 
     public CachedPlayerScript(String playerScriptUrl, long timestamp) {
       this.playerScriptUrl = playerScriptUrl;
       this.timestamp = timestamp;
+    }
+
+    public String getPlayerScriptUrl() {
+      return playerScriptUrl;
     }
   }
 }
