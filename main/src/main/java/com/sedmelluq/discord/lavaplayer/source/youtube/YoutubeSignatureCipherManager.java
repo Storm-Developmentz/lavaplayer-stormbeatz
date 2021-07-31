@@ -2,13 +2,6 @@ package com.sedmelluq.discord.lavaplayer.source.youtube;
 
 import com.sedmelluq.discord.lavaplayer.tools.io.HttpClientTools;
 import com.sedmelluq.discord.lavaplayer.tools.io.HttpInterface;
-import org.apache.commons.io.IOUtils;
-import org.apache.http.client.methods.CloseableHttpResponse;
-import org.apache.http.client.methods.HttpGet;
-import org.apache.http.client.utils.URIBuilder;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
-
 import java.io.IOException;
 import java.net.URI;
 import java.net.URISyntaxException;
@@ -25,6 +18,12 @@ import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 import java.util.stream.Collectors;
 import java.util.stream.Stream;
+import org.apache.commons.io.IOUtils;
+import org.apache.http.client.methods.CloseableHttpResponse;
+import org.apache.http.client.methods.HttpGet;
+import org.apache.http.client.utils.URIBuilder;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 /**
  * Handles parsing and caching of signature ciphers
@@ -234,10 +233,6 @@ public class YoutubeSignatureCipherManager implements YoutubeSignatureResolver {
     }
 
     return cipherKey;
-  }
-
-  public void clearCache(String cipherScriptUrl) {
-    cipherCache.remove(cipherScriptUrl);
   }
 
   private static String extractDollarEscapedFirstGroup(Pattern pattern, String text) {
