@@ -1,8 +1,17 @@
 package com.sedmelluq.discord.lavaplayer.track.playback;
 
+import static com.sedmelluq.discord.lavaplayer.tools.ExceptionTools.findDeepException;
+import static com.sedmelluq.discord.lavaplayer.tools.FriendlyException.Severity.FAULT;
+import static com.sedmelluq.discord.lavaplayer.tools.FriendlyException.Severity.SUSPICIOUS;
+import static com.sedmelluq.discord.lavaplayer.track.TrackMarkerHandler.MarkerState.ENDED;
+import static com.sedmelluq.discord.lavaplayer.track.TrackMarkerHandler.MarkerState.STOPPED;
+
 import com.sedmelluq.discord.lavaplayer.format.AudioDataFormat;
 import com.sedmelluq.discord.lavaplayer.player.AudioConfiguration;
 import com.sedmelluq.discord.lavaplayer.player.AudioPlayerOptions;
+import com.sedmelluq.discord.lavaplayer.source.youtube.DefaultYoutubeTrackDetailsLoader;
+import com.sedmelluq.discord.lavaplayer.source.youtube.YoutubeAudioSourceManager;
+import com.sedmelluq.discord.lavaplayer.source.youtube.YoutubeSignatureCipherManager;
 import com.sedmelluq.discord.lavaplayer.tools.ExceptionTools;
 import com.sedmelluq.discord.lavaplayer.tools.FriendlyException;
 import com.sedmelluq.discord.lavaplayer.track.AudioTrackState;
@@ -19,17 +28,12 @@ import java.util.concurrent.atomic.AtomicReference;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
-import static com.sedmelluq.discord.lavaplayer.tools.ExceptionTools.findDeepException;
-import static com.sedmelluq.discord.lavaplayer.tools.FriendlyException.Severity.FAULT;
-import static com.sedmelluq.discord.lavaplayer.tools.FriendlyException.Severity.SUSPICIOUS;
-import static com.sedmelluq.discord.lavaplayer.track.TrackMarkerHandler.MarkerState.ENDED;
-import static com.sedmelluq.discord.lavaplayer.track.TrackMarkerHandler.MarkerState.STOPPED;
-
 /**
  * Handles the execution and output buffering of an audio track.
  */
 public class LocalAudioTrackExecutor implements AudioTrackExecutor {
   private static final Logger log = LoggerFactory.getLogger(LocalAudioTrackExecutor.class);
+  private static final long RETRY_COOLDOWN = 5000L;
 
   private final InternalAudioTrack audioTrack;
   private final AudioProcessingContext processingContext;
@@ -45,6 +49,7 @@ public class LocalAudioTrackExecutor implements AudioTrackExecutor {
   private long externalSeekPosition = -1;
   private boolean interruptibleForSeek = false;
   private volatile Throwable trackException;
+  private volatile long lastRetry = -1;
 
   /**
    * @param audioTrack The audio track that this executor executes
@@ -55,7 +60,7 @@ public class LocalAudioTrackExecutor implements AudioTrackExecutor {
    * @param bufferDuration The size of the frame buffer in milliseconds
    */
   public LocalAudioTrackExecutor(InternalAudioTrack audioTrack, AudioConfiguration configuration,
-                                 AudioPlayerOptions playerOptions, boolean useSeekGhosting, int bufferDuration) {
+      AudioPlayerOptions playerOptions, boolean useSeekGhosting, int bufferDuration) {
 
     this.audioTrack = audioTrack;
     AudioDataFormat currentFormat = configuration.getOutputFormat();
@@ -89,7 +94,6 @@ public class LocalAudioTrackExecutor implements AudioTrackExecutor {
 
   @Override
   public void execute(TrackStateListener listener) {
-    InterruptedException interrupt = null;
 
     if (Thread.interrupted()) {
       log.debug("Cleared a stray interrupt.");
@@ -99,44 +103,75 @@ public class LocalAudioTrackExecutor implements AudioTrackExecutor {
       log.debug("Starting to play track {} locally with listener {}", audioTrack.getInfo().identifier, listener);
 
       state.set(AudioTrackState.LOADING);
+      attemptProcess(listener);
 
-      try {
-        audioTrack.process(this);
-
-        log.debug("Playing track {} finished or was stopped.", audioTrack.getIdentifier());
-      } catch (Throwable e) {
-        // Temporarily clear the interrupted status so it would not disrupt listener methods.
-        interrupt = findInterrupt(e);
-
-        if (interrupt != null && checkStopped()) {
-          log.debug("Track {} was interrupted outside of execution loop.", audioTrack.getIdentifier());
-        } else {
-          frameBuffer.setTerminateOnEmpty();
-
-          FriendlyException exception = ExceptionTools.wrapUnfriendlyExceptions("Something broke when playing the track.", FAULT, e);
-          ExceptionTools.log(log, exception, "playback of " + audioTrack.getIdentifier());
-
-          trackException = exception;
-          listener.onTrackException(audioTrack, exception);
-
-          ExceptionTools.rethrowErrors(e);
-        }
-      } finally {
-        synchronized (actionSynchronizer) {
-          interrupt = interrupt != null ? interrupt : findInterrupt(null);
-
-          playingThread.compareAndSet(Thread.currentThread(), null);
-
-          markerTracker.trigger(ENDED);
-          state.set(AudioTrackState.FINISHED);
-        }
-
-        if (interrupt != null) {
-          Thread.currentThread().interrupt();
-        }
-      }
     } else {
       log.warn("Tried to start an already playing track {}", audioTrack.getIdentifier());
+    }
+  }
+
+  private void attemptProcess(TrackStateListener listener) {
+
+    InterruptedException interrupt = null;
+
+    try {
+      audioTrack.process(this);
+
+      log.debug("Playing track {} finished or was stopped.", audioTrack.getIdentifier());
+    } catch (Throwable e) {
+
+      // Check for 403, attempt to clear cipher cache and retry if no retries in the past 5 seconds.
+      if (e.getMessage().contains("Not success status code: 403")
+          && (lastRetry == -1 || lastRetry + RETRY_COOLDOWN <= System.currentTimeMillis())
+          && audioTrack.getSourceManager() instanceof YoutubeAudioSourceManager) {
+        lastRetry = System.currentTimeMillis();
+
+        log.debug("Detected 403, clearing cipher cache and retrying.");
+
+        YoutubeAudioSourceManager sourceManager = (YoutubeAudioSourceManager) audioTrack.getSourceManager();
+        DefaultYoutubeTrackDetailsLoader trackDetailsLoader = (DefaultYoutubeTrackDetailsLoader) sourceManager.getTrackDetailsLoader();
+        DefaultYoutubeTrackDetailsLoader.CachedPlayerScript cachedScript = trackDetailsLoader.getCachedPlayerScript();
+
+        // Clear cached scripts and ciphers.
+        if (cachedScript != null) {
+          ((YoutubeSignatureCipherManager) sourceManager.getSignatureResolver()).clearCache(cachedScript.getPlayerScriptUrl());
+          trackDetailsLoader.clearCache();
+        }
+
+        // Attempt to process again.
+        attemptProcess(listener);
+        return;
+      }
+
+      // Temporarily clear the interrupted status so it would not disrupt listener methods.
+      interrupt = findInterrupt(e);
+
+      if (interrupt != null && checkStopped()) {
+        log.debug("Track {} was interrupted outside of execution loop.", audioTrack.getIdentifier());
+      } else {
+        frameBuffer.setTerminateOnEmpty();
+
+        FriendlyException exception = ExceptionTools.wrapUnfriendlyExceptions("Something broke when playing the track.", FAULT, e);
+        ExceptionTools.log(log, exception, "playback of " + audioTrack.getIdentifier());
+
+        trackException = exception;
+        listener.onTrackException(audioTrack, exception);
+
+        ExceptionTools.rethrowErrors(e);
+      }
+    } finally {
+      synchronized (actionSynchronizer) {
+        interrupt = interrupt != null ? interrupt : findInterrupt(null);
+
+        playingThread.compareAndSet(Thread.currentThread(), null);
+
+        markerTracker.trigger(ENDED);
+        state.set(AudioTrackState.FINISHED);
+      }
+
+      if (interrupt != null) {
+        Thread.currentThread().interrupt();
+      }
     }
   }
 

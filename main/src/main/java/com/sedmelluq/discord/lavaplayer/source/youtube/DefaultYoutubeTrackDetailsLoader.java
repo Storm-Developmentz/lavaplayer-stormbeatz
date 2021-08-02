@@ -1,5 +1,11 @@
 package com.sedmelluq.discord.lavaplayer.source.youtube;
 
+import static com.sedmelluq.discord.lavaplayer.source.youtube.YoutubeHttpContextFilter.PBJ_PARAMETER;
+import static com.sedmelluq.discord.lavaplayer.tools.ExceptionTools.throwWithDebugInfo;
+import static com.sedmelluq.discord.lavaplayer.tools.FriendlyException.Severity.COMMON;
+import static com.sedmelluq.discord.lavaplayer.tools.FriendlyException.Severity.SUSPICIOUS;
+import static java.nio.charset.StandardCharsets.UTF_8;
+
 import com.sedmelluq.discord.lavaplayer.tools.DataFormatTools;
 import com.sedmelluq.discord.lavaplayer.tools.ExceptionTools;
 import com.sedmelluq.discord.lavaplayer.tools.FriendlyException;
@@ -14,12 +20,6 @@ import org.apache.http.entity.StringEntity;
 import org.apache.http.util.EntityUtils;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
-
-import static com.sedmelluq.discord.lavaplayer.source.youtube.YoutubeHttpContextFilter.PBJ_PARAMETER;
-import static com.sedmelluq.discord.lavaplayer.tools.ExceptionTools.throwWithDebugInfo;
-import static com.sedmelluq.discord.lavaplayer.tools.FriendlyException.Severity.COMMON;
-import static com.sedmelluq.discord.lavaplayer.tools.FriendlyException.Severity.SUSPICIOUS;
-import static java.nio.charset.StandardCharsets.UTF_8;
 
 public class DefaultYoutubeTrackDetailsLoader implements YoutubeTrackDetailsLoader {
   private static final Logger log = LoggerFactory.getLogger(DefaultYoutubeTrackDetailsLoader.class);
@@ -263,13 +263,25 @@ public class DefaultYoutubeTrackDetailsLoader implements YoutubeTrackDetailsLoad
     }
   }
 
-  protected static class CachedPlayerScript {
+  public CachedPlayerScript getCachedPlayerScript() {
+    return cachedPlayerScript;
+  }
+
+  public void clearCache() {
+    cachedPlayerScript = null;
+  }
+
+  public static class CachedPlayerScript {
     public final String playerScriptUrl;
     public final long timestamp;
 
     public CachedPlayerScript(String playerScriptUrl, long timestamp) {
       this.playerScriptUrl = playerScriptUrl;
       this.timestamp = timestamp;
+    }
+
+    public String getPlayerScriptUrl() {
+      return playerScriptUrl;
     }
   }
 }
